@@ -110,13 +110,12 @@ def analyze_log(parser: Iterable[Tuple[str, str]]) -> Dict[str, Dict[str, Union[
         snippets["totals"]["total_requests"] += 1
         snippets["totals"]["total_time"] += request_time
 
-        if request_url not in snippets:
-            snippets["urls"].update({request_url: {"count": 1,
-                                                   "request_times": [request_time]}})
+        if request_url in snippets["urls"]:
+            snippets["urls"][request_url]["count"] += 1
+            snippets["urls"][request_url]["request_times"].append(request_time)
             continue
-        snippets[request_url]["count"] += 1
-        snippets[request_url]["request_times"].append(request_time)
 
+        snippets["urls"].update({request_url: {"count": 1, "request_times": [request_time]}})
     return snippets
 
 
