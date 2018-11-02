@@ -24,14 +24,13 @@ class TestFindNewestLogFile(unittest.TestCase):
 class TestAnalyzeLog(unittest.TestCase):
     def test_it_returns_correct_snippet(self):
         parser = [("some_url_1", 0.12), ("some_url_2", 0.13), ("some_url_1", 0.13)]
-        correct_snippets = {"totals": {"total_requests": 3, "total_time": 0.38},
-                            "urls": {
-                                     "some_url_1": {"count": 2, "request_times": [0.12, 0.13]},
-                                     "some_url_2": {"count": 1, "request_times": [0.13]}
-                                      },
-                            }
+        correct_totals = {"total_requests": 3, "total_time": 0.38}
+        correct_urls = {
+                 "some_url_1": {"count": 2, "request_times": [0.12, 0.13]},
+                 "some_url_2": {"count": 1, "request_times": [0.13]}
+                  }
         snippets = analyze_log(parser)
-        self.assertDictEqual(correct_snippets, snippets)
+        self.assertTupleEqual((correct_totals, correct_urls), snippets)
 
 
 if __name__ == '__main__':

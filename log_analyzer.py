@@ -17,7 +17,7 @@ import statistics
 import sys
 from bisect import insort_right
 from datetime import datetime
-from typing import NamedTuple, Optional, Dict, Tuple, Iterable, List, Union
+from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
 from string import Template
 
 
@@ -26,7 +26,7 @@ logging.basicConfig(filename=APP_LOG_PATH if os.path.isfile(APP_LOG_PATH) else N
                     format="[%(asctime)s] %(levelname).1s %(message)s",
                     datefmt="%Y.%m.%d %H:%M:%S",
                     level=logging.INFO)
-logger = logging.getLogger(".config.cfg")
+logger = logging.getLogger(__file__)
 
 
 config = {
@@ -61,7 +61,7 @@ def find_newest_log_file(log_dir: str) -> Optional[LogFile]:
         logger.info("No files in log directory {}".format(log_dir))
         return None
 
-    newest_log = log_files[-1]
+    newest_log = log_files.pop()
     newest_log_date = _get_date_in_the_name(newest_log)
 
     return LogFile(path_to_file=log_dir,
@@ -93,72 +93,78 @@ def log_parser(log_file: LogFile) -> Iterable[Tuple[str, str]]:
         while True:
             log_row = next(file).split(" ")
             request_url = log_row[7]
-            request_time = float(log_row[-1])
+            request_time = float(log_row.pop())
 
             yield request_url, request_time
 
 
-def analyze_log(parser: Iterable[Tuple[str, str]]) -> Dict[str, Dict[str, Union[int, List[float]]]]:
+def analyze_log(parser: Iterable[Tuple[str, str]]) -> Tuple[Dict[str, int],
+                                                            Dict[str, Dict[str, Union[int, List[float]]]]]:
 
-    snippets = {
-        "totals": {"total_requests": 0,
-                   "total_time": 0},
-        "urls": {}
-        }
+    totals = {"total_requests": 0,
+              "total_time": 0}
+    urls = {}
+
     for url_and_time in parser:
         request_url, request_time = url_and_time
-        snippets["totals"]["total_requests"] += 1
-        snippets["totals"]["total_time"] += request_time
 
-        if request_url in snippets["urls"]:
-            snippets["urls"][request_url]["count"] += 1
-            snippets["urls"][request_url]["request_times"].append(request_time)
+        totals["total_requests"] += 1
+        totals["total_time"] += request_time
+
+        if request_url in urls:
+            urls[request_url]["count"] += 1
+            urls[request_url]["request_times"].append(request_time)
             continue
 
-        snippets["urls"].update({request_url: {"count": 1, "request_times": [request_time]}})
-    return snippets
+        urls.update({request_url: {"count": 1, "request_times": [request_time]}})
+
+    return totals, urls
 
 
-def count_stats(parsed_log: dict, report_size: int) ->List[dict]:
+def count_stats(totals: dict, urls: dict, report_size: int) ->List[Dict[str, Union[str, int, float]]]:
 
     _report = []
 
-    for key, value in parsed_log.items():
-        if key == "totals":
-            total_requests = value["total_requests"]
-            total_time = value["total_time"]
-        if key == "urls":
-            for url, counts in value.items():
-                time_sum = sum(counts["request_times"])
-                time_avg = time_sum/len(counts["request_times"])
-                time_max = max(counts["request_times"])
-                time_med = statistics.median(counts["request_times"])
-                count_perc = counts["count"] * total_requests / 100
-                time_perc = time_sum * total_time / 100
+    total_requests = totals["total_requests"]
+    total_time = totals["total_time"]
 
-                _report.append({
-                    "url": url,
-                    "count": counts["count"],
-                    "count_perc": count_perc,
-                    "time_sum": time_sum,
-                    "time_perc": time_perc,
-                    "time_avg": time_avg,
-                    "time_max": time_max,
-                    "time_med": time_med
-                })
-    _sorted_report = sorted(_report, key=lambda item: item["count"])
-    final_report = _sorted_report[0:report_size]
+    for url, count_and_times in urls.items():
+        count = count_and_times["count"]
+        request_times = count_and_times["request_times"]
 
-    return final_report
+        time_sum = sum(request_times)
+        time_avg = time_sum / len(request_times)
+        time_max = max(request_times)
+        time_med = statistics.median(request_times)
+        count_perc = count * total_requests / 100
+        time_perc = time_sum * total_time / 100
+
+        _report.append({
+            "url": url,
+            "count": count,
+            "count_perc": count_perc,
+            "time_sum": time_sum,
+            "time_perc": time_perc,
+            "time_avg": time_avg,
+            "time_max": time_max,
+            "time_med": time_med
+        })
+
+    _sorted_report = sorted(_report, key=lambda item: item["count"], reverse=True)
+    final_stats = _sorted_report[0:report_size]
+
+    return final_stats
 
 
-def create_report(report_dir: str, final_report: List[dict], report_date: str):
-    with open(os.path.join(report_dir, "report.html"), encoding="utf-8") as file:
-        html_template = Template(file.read())
-    final_template = html_template.safe_substitute(table_json=json.dumps(final_report))
+def create_report(report_dir: str, final_stats: List[Dict[str, Union[str, int, float]]], report_date: str):
 
-    with open(os.path.join(report_dir, REPORT_NAME_PATTERN.format(report_date)), mode="w") as file:
-        file.write(final_template)
+    with open(os.path.join(report_dir, "report.html"), encoding="utf-8") as template_file:
+        report_template = Template(template_file.read())
+
+    final_report = report_template.safe_substitute(table_json=json.dumps(final_stats))
+
+    with open(os.path.join(report_dir, REPORT_NAME_PATTERN.format(report_date)), mode="w") as report_file:
+        report_file.write(final_report)
 
 
 def parse_args(app_name) -> argparse.Namespace:
@@ -198,21 +204,26 @@ def main():
     if not os.path.isdir(log_dir):
         logger.error("Log directory doesn't exist.")
         sys.exit(1)
+
     newest_log = find_newest_log_file(log_dir)
     if not newest_log:
-        sys.exit(0)
-    report_path = build_report_path(report_dir, newest_log.date_in_file_name)
+        sys.exit()
+
+    report_path = os.path.join(report_dir, REPORT_NAME_PATTERN.format(newest_log.date_in_file_name))
     if report_exists(report_path):
         logger.info("Report is already exist {}".format(report_path))
         sys.exit()
 
     parser = log_parser(newest_log)
 
-    snippets = analyze_log(parser)
+    totals, urls = analyze_log(parser)
 
-    final_report = count_stats(snippets, report_size)
-    create_report(report_dir, final_report, newest_log.date_in_file_name)
+    final_stats = count_stats(totals, urls, report_size)
+    create_report(report_dir, final_stats, newest_log.date_in_file_name)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as err:
+        logger.exception(err)
